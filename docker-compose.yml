@@ -1,0 +1,35 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Project Sentinel — Docker Compose (Local Development)
+# ─────────────────────────────────────────────────────────────────────────────
+# Provides PostgreSQL with pgvector for vector-aware storage.
+# The app itself runs via uvicorn outside Docker during development,
+# connecting to this containerized database.
+#
+# Usage:
+#   docker compose up -d          # start database in background
+#   docker compose down           # stop and remove containers
+#   docker compose down -v        # stop and remove containers + volumes
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: sentinel-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: sentinel_dev
+      POSTGRES_DB: sentinel
+    ports:
+      - "5432:5432"
+    volumes:
+      - sentinel_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  sentinel_data:
+    driver: local
