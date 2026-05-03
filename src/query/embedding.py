@@ -10,6 +10,16 @@ class EmbeddingService:
     def embed_document(self, text: str) -> list[float]:
         return self._voyage_embed([text], input_type="document")[0]
 
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        batch_size = 90
+        all_embeddings = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i+batch_size]
+            all_embeddings.extend(self._voyage_embed(batch, input_type="document"))
+        return all_embeddings
+
     def embed_query(self, text: str) -> list[float]:
         return self._voyage_embed([text], input_type="query")[0]
 

@@ -119,6 +119,7 @@ class IngestionService:
         else:
             self._remove_changed_or_deleted_chunks(repo, changes)
 
+        new_candidates = []
         for path in source_files:
             for candidate in self.parser.parse_file(path, repo_path):
                 chunk_id = stable_chunk_id(repo.id, candidate.file_path, candidate.symbol_name, candidate.start_line)
@@ -127,6 +128,22 @@ class IngestionService:
                 if existing and (existing.ast_hash or existing.content_hash) == hash_value:
                     parsed_chunks.append(existing)
                     continue
+                new_candidates.append((chunk_id, candidate))
+
+        batch_size = 90
+        for i in range(0, len(new_candidates), batch_size):
+            batch = new_candidates[i:i+batch_size]
+            texts_to_embed = [
+                f"{c.file_path} {c.symbol_name or ''} {c.raw_text}"
+                for _, c in batch
+            ]
+            embeddings = self.embedding.embed_documents(texts_to_embed)
+            
+            new_chunks = []
+            new_symbols = []
+            new_edges = []
+            
+            for (chunk_id, candidate), emb in zip(batch, embeddings):
                 chunk = CodeChunk(
                     id=chunk_id,
                     repo_id=repo.id,
@@ -143,17 +160,20 @@ class IngestionService:
                     content_hash=candidate.content_hash,
                     raw_text=candidate.raw_text,
                     summary=summarize_chunk(candidate.raw_text),
-                    embedding=self.embedding.embed_document(
-                        f"{candidate.file_path} {candidate.symbol_name or ''} {candidate.raw_text}"
-                    ),
+                    embedding=emb,
                     sparse_terms=sparse_terms(
                         f"{candidate.file_path} {candidate.symbol_name or ''} {candidate.raw_text}"
                     ),
                 )
-                self.state.upsert_chunks([chunk])
-                parsed_chunks.append(chunk)
-                self.state.graph.upsert_symbols([symbol_from_chunk(chunk)])
-                self.state.graph.upsert_edges(extract_dependency_edges(chunk, candidate.dependencies))
+                new_chunks.append(chunk)
+                new_symbols.append(symbol_from_chunk(chunk))
+                new_edges.extend(extract_dependency_edges(chunk, candidate.dependencies))
+                
+            self.state.upsert_chunks(new_chunks)
+            parsed_chunks.extend(new_chunks)
+            self.state.graph.upsert_symbols(new_symbols)
+            self.state.graph.upsert_edges(new_edges)
+
         previous = [chunk_id for chunk_id in self.state.repo_chunks.get(repo.id, []) if chunk_id in self.state.chunks]
         merged = list(dict.fromkeys(previous + [chunk.id for chunk in parsed_chunks]))
         self.state.repo_chunks[repo.id] = merged
