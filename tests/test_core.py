@@ -222,6 +222,28 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(graph.status_code, 200)
         self.assertEqual(graph.json()["repo_id"], repo_id)
 
+    def test_ui_assets_are_served(self) -> None:
+        client = TestClient(app)
+
+        app_page = client.get("/app")
+        script = client.get("/static/app.js")
+
+        self.assertEqual(app_page.status_code, 200)
+        self.assertIn("Cross-Repo Code Search", app_page.text)
+        self.assertEqual(script.status_code, 200)
+
+    def test_repository_list_endpoint_returns_registered_repos(self) -> None:
+        client = TestClient(app)
+        client.post(
+            "/repositories",
+            json={"name": "list-api", "git_url": "https://github.com/example/list-api.git"},
+        )
+
+        repos = client.get("/repositories")
+
+        self.assertEqual(repos.status_code, 200)
+        self.assertTrue(any(repo["name"] == "list-api" for repo in repos.json()))
+
 
 if __name__ == "__main__":
     unittest.main()

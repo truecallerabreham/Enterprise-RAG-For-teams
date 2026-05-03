@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cross-Repo Code Search RAG</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Cross-Repo Code Search</h1>
+        <p id="health">Checking service...</p>
+      </div>
+      <a class="docs-link" href="/docs">API Docs</a>
+    </header>
+
+    <main class="layout">
+      <section class="panel repo-panel">
+        <div class="panel-header">
+          <h2>Repositories</h2>
+          <button id="refreshRepos" title="Refresh repositories">Refresh</button>
+        </div>
+
+        <form id="repoForm" class="stack">
+          <label>
+            Name
+            <input name="name" required placeholder="payments-service" />
+          </label>
+          <label>
+            Git URL
+            <input name="git_url" required placeholder="https://github.com/org/repo.git" />
+          </label>
+          <div class="grid-two">
+            <label>
+              Branch
+              <input name="default_branch" value="main" />
+            </label>
+            <label>
+              Visibility
+              <select name="visibility">
+                <option value="public">Public</option>
+                <option value="private">Private</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            Credential env var
+            <input name="credential_env_var" placeholder="GITHUB_TOKEN" />
+          </label>
+          <button type="submit">Register Repo</button>
+        </form>
+
+        <div id="repoList" class="list"></div>
+      </section>
+
+      <section class="panel action-panel">
+        <div class="panel-header">
+          <h2>Ingestion</h2>
+        </div>
+        <div class="stack">
+          <label>
+            Selected repository
+            <select id="repoSelect"></select>
+          </label>
+          <div class="button-row">
+            <button id="requestIngest">Ask Permission</button>
+            <button id="confirmIngest">Confirm Ingest</button>
+            <button id="inspectGraph">Inspect Graph</button>
+          </div>
+        </div>
+        <pre id="graphOutput" class="output"></pre>
+      </section>
+
+      <section class="panel query-panel">
+        <div class="panel-header">
+          <h2>Ask Codebase</h2>
+        </div>
+        <form id="queryForm" class="stack">
+          <textarea name="question" rows="4" required placeholder="Where is user authentication handled?"></textarea>
+          <div class="button-row">
+            <button type="submit">Search</button>
+          </div>
+        </form>
+        <article id="answer" class="answer"></article>
+        <div id="citations" class="list"></div>
+        <div id="retrieved" class="list"></div>
+      </section>
+
+      <section class="panel events-panel">
+        <div class="panel-header">
+          <h2>Assistant Activity</h2>
+          <button id="clearEvents" title="Clear activity">Clear</button>
+        </div>
+        <div id="events" class="timeline"></div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

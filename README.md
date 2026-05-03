@@ -66,6 +66,12 @@ Health check:
 Invoke-RestMethod http://127.0.0.1:8000/health
 ```
 
+Open the internal web UI:
+
+```text
+http://127.0.0.1:8000/app
+```
+
 Run tests:
 
 ```powershell

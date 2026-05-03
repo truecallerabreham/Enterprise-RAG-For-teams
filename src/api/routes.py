@@ -34,6 +34,11 @@ def register_repository(payload: RepositoryCreate) -> RepositoryRecord:
     return app_state.add_repository(payload)
 
 
+@router.get("/repositories", response_model=list[RepositoryRecord])
+def list_repositories() -> list[RepositoryRecord]:
+    return list(app_state.repositories.values())
+
+
 @router.post("/repositories/{repo_id}/ingest", response_model=IngestionStatus)
 def ingest_repository(repo_id: str, payload: IngestionRequest | None = None) -> IngestionStatus:
     request = payload or IngestionRequest()
