@@ -1,4 +1,4 @@
-# Cross-Repo Code Search RAG
+# Entreprise RAG FOR DEV Team
 
 A learning-oriented, modular RAG system for cross-repo code understanding. Users register repositories by Git URL, the backend manages clone/fetch work internally, and the API provides ingestion plus cited code-search answers.
 
