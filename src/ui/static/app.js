@@ -33,9 +33,17 @@ els.repoForm.addEventListener("submit", async (event) => {
     credential_env_var: form.get("credential_env_var") || null,
   };
   const repo = await request("/repositories", { method: "POST", body: payload });
-  addEvent("completed", `Registered ${repo.name}.`);
+  addEvent("completed", `Registered ${repo.name}. It is not searchable until ingestion is confirmed.`);
   event.currentTarget.reset();
   await loadRepositories();
+  selectRepo(repo.id);
+  const permissionJob = await request(`/repositories/${repo.id}/ingest`, {
+    method: "POST",
+    body: { confirm: false },
+  });
+  renderEvents(permissionJob.assistant_events);
+  await loadRepositories();
+  selectRepo(repo.id);
 });
 
 document.querySelector("#queryForm").addEventListener("submit", async (event) => {
@@ -56,11 +64,12 @@ document.querySelector("#queryForm").addEventListener("submit", async (event) =>
 
 async function boot() {
   const health = await request("/health");
-  els.health.textContent = `Service ${health.status} · vectors: ${health.vector_store} · graph: ${health.graph_store}`;
+  els.health.textContent = `Service ${health.status} | vectors: ${health.vector_store} | graph: ${health.graph_store}`;
   await loadRepositories();
 }
 
 async function loadRepositories() {
+  const selected = selectedRepoId();
   state.repositories = await request("/repositories");
   els.repoList.innerHTML = "";
   els.repoSelect.innerHTML = "";
@@ -69,17 +78,20 @@ async function loadRepositories() {
     item.className = "item";
     item.innerHTML = `<div class="item-title">${escapeHtml(repo.name)}</div>
       <div class="meta">${escapeHtml(repo.git_url)}</div>
-      <div class="meta">${escapeHtml(repo.default_branch)} · ${escapeHtml(repo.visibility)}</div>`;
+      <div class="meta">${escapeHtml(repo.default_branch)} | ${escapeHtml(repo.visibility)}</div>
+      <div class="meta">Status: ${escapeHtml(repo.indexing_status)} | chunks: ${repo.chunk_count}</div>
+      ${repo.last_error ? `<div class="meta error-text">${escapeHtml(repo.last_error)}</div>` : ""}`;
     els.repoList.appendChild(item);
 
     const option = document.createElement("option");
     option.value = repo.id;
-    option.textContent = repo.name;
+    option.textContent = `${repo.name} (${repo.indexing_status}, ${repo.chunk_count} chunks)`;
     els.repoSelect.appendChild(option);
   }
   if (!state.repositories.length) {
     els.repoList.innerHTML = `<div class="item"><div class="meta">No repositories registered yet.</div></div>`;
   }
+  selectRepo(selected);
 }
 
 async function ingestSelected(confirm) {
@@ -88,11 +100,20 @@ async function ingestSelected(confirm) {
     addEvent("failed", "Register or select a repository first.");
     return;
   }
+  const action = confirm ? "confirmed ingestion" : "permission request";
+  addEvent("planning", `Starting ${action} for the selected repository.`);
   const job = await request(`/repositories/${repoId}/ingest`, {
     method: "POST",
     body: { confirm },
   });
   renderEvents(job.assistant_events);
+  if (job.errors?.length) {
+    for (const error of job.errors) {
+      addEvent("failed", error);
+    }
+  }
+  await loadRepositories();
+  selectRepo(repoId);
 }
 
 async function inspectGraph() {
@@ -102,6 +123,15 @@ async function inspectGraph() {
     return;
   }
   const graph = await request(`/repositories/${repoId}/graph`);
+  if (!graph.symbols.length) {
+    const repo = state.repositories.find((item) => item.id === repoId);
+    els.graphOutput.textContent =
+      `No graph symbols have been indexed for this repository yet.\n\n` +
+      `Current status: ${repo?.indexing_status || "unknown"}\n` +
+      `Next step: click "Confirm Ingest" so the backend can clone/fetch, parse, and index the code.`;
+    addEvent("needs_permission", "Graph is empty because this repository has not been indexed yet.");
+    return;
+  }
   els.graphOutput.textContent = JSON.stringify(graph, null, 2);
 }
 
@@ -110,7 +140,7 @@ function renderAnswer(response) {
   els.citations.innerHTML = response.citations
     .map(
       (citation) => `<div class="item">
-        <div class="item-title">${escapeHtml(citation.repo)} · ${escapeHtml(citation.file)}</div>
+        <div class="item-title">${escapeHtml(citation.repo)} | ${escapeHtml(citation.file)}</div>
         <div class="meta">Lines ${citation.start_line}-${citation.end_line}</div>
       </div>`,
     )
@@ -118,8 +148,8 @@ function renderAnswer(response) {
   els.retrieved.innerHTML = response.retrieved_chunks
     .map(
       (chunk) => `<div class="item">
-        <div class="item-title">${escapeHtml(chunk.repo_name)} · ${escapeHtml(chunk.file_path)}</div>
-        <div class="meta">Lines ${chunk.start_line}-${chunk.end_line} · score ${chunk.score.toFixed(3)} · ${escapeHtml(chunk.retrieval_sources.join(", "))}</div>
+        <div class="item-title">${escapeHtml(chunk.repo_name)} | ${escapeHtml(chunk.file_path)}</div>
+        <div class="meta">Lines ${chunk.start_line}-${chunk.end_line} | score ${chunk.score.toFixed(3)} | ${escapeHtml(chunk.retrieval_sources.join(", "))}</div>
         <div class="meta">${escapeHtml(chunk.summary)}</div>
       </div>`,
     )
@@ -156,6 +186,12 @@ async function request(path, options = {}) {
 
 function selectedRepoId() {
   return els.repoSelect.value || null;
+}
+
+function selectRepo(repoId) {
+  if (repoId) {
+    els.repoSelect.value = repoId;
+  }
 }
 
 function escapeHtml(value) {

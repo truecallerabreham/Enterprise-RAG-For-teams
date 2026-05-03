@@ -72,6 +72,7 @@ class IngestionTests(unittest.TestCase):
         self.assertEqual(chunks[0].symbol_name, "authenticate_user")
         self.assertTrue(chunks[0].embedding)
         self.assertIn("authenticate_user", state.chunks[chunks[0].id].raw_text)
+        self.assertEqual(repo.chunk_count, 1)
 
     def test_ingestion_populates_graph_symbols_and_edges(self) -> None:
         state = AppState()
@@ -208,6 +209,25 @@ class ApiTests(unittest.TestCase):
         ingestion = client.post(f"/repositories/{repo_id}/ingest", json={"confirm": False})
         self.assertEqual(ingestion.status_code, 200)
         self.assertEqual(ingestion.json()["status"], "needs_permission")
+        repos = client.get("/repositories").json()
+        registered = next(repo for repo in repos if repo["id"] == repo_id)
+        self.assertEqual(registered["indexing_status"], "needs_permission")
+        self.assertEqual(registered["chunk_count"], 0)
+
+    def test_query_unindexed_repo_explains_ingestion_requirement(self) -> None:
+        client = TestClient(app)
+        repo_response = client.post(
+            "/repositories",
+            json={"name": "unindexed-api", "git_url": "https://github.com/example/unindexed-api.git"},
+        )
+        repo_id = repo_response.json()["id"]
+
+        query = client.post("/query", json={"question": "where is search implemented?", "repo_ids": [repo_id]})
+
+        self.assertEqual(query.status_code, 200)
+        body = query.json()
+        self.assertIn("confirm ingestion", body["answer"])
+        self.assertTrue(any(event["type"] == "needs_permission" for event in body["assistant_events"]))
 
     def test_graph_endpoint_returns_repository_snapshot(self) -> None:
         client = TestClient(app)

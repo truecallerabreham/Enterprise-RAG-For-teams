@@ -71,6 +71,7 @@ def get_ingestion(job_id: str) -> IngestionStatus:
 def repository_graph(repo_id: str) -> GraphSnapshot:
     if repo_id not in app_state.repositories:
         raise HTTPException(status_code=404, detail="Repository not found")
+    app_state.refresh_repository_counts(repo_id)
     symbols, edges = app_state.graph.snapshot(repo_id)
     return GraphSnapshot(repo_id=repo_id, symbols=symbols, edges=edges)
 

@@ -27,6 +27,10 @@ class RepositoryCreate(BaseModel):
 
 class RepositoryRecord(RepositoryCreate):
     id: str = Field(default_factory=lambda: str(uuid4()))
+    indexing_status: Literal["registered", "needs_permission", "indexing", "indexed", "failed"] = "registered"
+    chunk_count: int = 0
+    last_ingestion_id: str | None = None
+    last_error: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

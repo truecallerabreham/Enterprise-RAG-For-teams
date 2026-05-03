@@ -166,6 +166,10 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.error-text {
+  color: var(--error);
+}
+
 .event {
   border-left: 4px solid var(--accent);
 }

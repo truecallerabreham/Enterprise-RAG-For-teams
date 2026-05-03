@@ -46,20 +46,32 @@ class IngestionService:
             ],
         )
         self.state.ingestions[job.id] = job
+        repo.last_ingestion_id = job.id
         if not request.confirm:
+            repo.indexing_status = "needs_permission"
             return job
 
         try:
+            repo.indexing_status = "indexing"
+            repo.last_error = None
             repo_path = self.workspace.prepare(repo)
             changes = self.workspace.changed_file_statuses(repo_path, request.base_ref, request.webhook_commit)
             chunks = self._ingest_path(repo, repo_path, changes=changes or None)
             job.status = "completed"
             job.files_seen = len({chunk.file_path for chunk in chunks})
-            job.chunks_indexed = len(chunks)
-            job.assistant_events.append(AssistantEvent(type="completed", message="Repository ingestion completed."))
+            job.chunks_indexed = self.state.repositories[repo.id].chunk_count
+            repo.indexing_status = "indexed"
+            job.assistant_events.append(
+                AssistantEvent(
+                    type="completed",
+                    message=f"Repository ingestion completed. Indexed {repo.chunk_count} searchable chunks.",
+                )
+            )
         except Exception as exc:
             job.status = "failed"
             job.errors.append(str(exc))
+            repo.indexing_status = "failed"
+            repo.last_error = str(exc)
             job.assistant_events.append(AssistantEvent(type="failed", message=f"Ingestion failed: {exc}"))
         return job
 
@@ -105,6 +117,7 @@ class IngestionService:
         previous = [chunk_id for chunk_id in self.state.repo_chunks.get(repo.id, []) if chunk_id in self.state.chunks]
         merged = list(dict.fromkeys(previous + [chunk.id for chunk in parsed_chunks]))
         self.state.repo_chunks[repo.id] = merged
+        self.state.refresh_repository_counts(repo.id)
         return parsed_chunks
 
     def _source_files(self, repo_path: Path, changes: list | None = None) -> list[Path]:

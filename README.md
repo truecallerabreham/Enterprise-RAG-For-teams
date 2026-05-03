@@ -104,6 +104,13 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/repositories `
 
 Manual ingestion is permission-gated. First call with `confirm: false` to get the assistant permission event, then call with `confirm: true` when you want the backend to clone/fetch and index the repository.
 
+Repository registration does not make a repository searchable by itself. A registered repository has only metadata until ingestion completes. In the UI, check the repository status and chunk count:
+
+- `registered` or `needs_permission`: metadata exists, but there are no searchable chunks yet.
+- `indexing`: the backend is cloning/fetching, parsing, and indexing.
+- `indexed`: the repository has searchable chunks and graph symbols.
+- `failed`: ingestion failed; the repository card shows the error.
+
 Webhook ingestion uses the payload `before` and `after` commit SHAs to run `git diff --name-status`. Modified files are re-indexed, deleted files remove their old chunks, and renamed files clean up the previous path before indexing the new one.
 
 Inspect the learned symbol graph for a repository:

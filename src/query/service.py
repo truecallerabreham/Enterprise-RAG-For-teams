@@ -14,6 +14,19 @@ class QueryService:
             AssistantEvent(type="searching", message="Running dense and sparse retrieval over indexed chunks."),
         ]
         repo_ids = set(request.repo_ids)
+        unindexed = [
+            repo
+            for repo_id, repo in self.state.repositories.items()
+            if (not repo_ids or repo_id in repo_ids) and repo.chunk_count == 0
+        ]
+        if unindexed:
+            names = ", ".join(repo.name for repo in unindexed)
+            events.append(
+                AssistantEvent(
+                    type="needs_permission",
+                    message=f"{names} has no indexed chunks yet. Confirm ingestion before expecting search results.",
+                )
+            )
         dense = dense_search(self.state, request.question, repo_ids)
         sparse = sparse_search(self.state, request.question, repo_ids)
         fused = reciprocal_rank_fusion([dense, sparse], limit=max(request.top_k * 4, 20))
@@ -36,7 +49,10 @@ class QueryService:
 
     def _synthesize(self, question: str, results: list[SearchResult]) -> str:
         if not results:
-            return "I could not find indexed code that matches the question yet. Register and ingest repositories, then try again."
+            return (
+                "I could not find indexed code that matches the question yet. "
+                "Registration alone only stores repo metadata; confirm ingestion so the backend can clone/fetch, parse, and index the code."
+            )
         top = results[0]
         return (
             f"The strongest match for '{question}' is in {top.repo_name}/{top.file_path} "

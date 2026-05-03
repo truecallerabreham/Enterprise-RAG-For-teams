@@ -33,6 +33,8 @@ class AppState:
             self.chunks[chunk.id] = chunk
         if self.vector_store is not None:
             self.vector_store.upsert_chunks(chunks)
+        for repo_id in {chunk.repo_id for chunk in chunks}:
+            self.refresh_repository_counts(repo_id)
 
     def delete_chunks(self, chunk_ids: list[str]) -> None:
         if not chunk_ids:
@@ -44,6 +46,8 @@ class AppState:
         self.graph.remove_chunks(chunk_ids)
         if self.vector_store is not None:
             self.vector_store.delete_chunks(chunk_ids)
+        for repo_id in list(self.repositories):
+            self.refresh_repository_counts(repo_id)
 
     def chunk_ids_for_files(self, repo_id: str, file_paths: set[str]) -> list[str]:
         return [
@@ -51,6 +55,12 @@ class AppState:
             for chunk_id in self.repo_chunks.get(repo_id, [])
             if chunk_id in self.chunks and self.chunks[chunk_id].file_path in file_paths
         ]
+
+    def refresh_repository_counts(self, repo_id: str) -> None:
+        repo = self.repositories.get(repo_id)
+        if repo is None:
+            return
+        repo.chunk_count = len([chunk_id for chunk_id in self.repo_chunks.get(repo_id, []) if chunk_id in self.chunks])
 
     def vector_store_status(self) -> str:
         if self.vector_store is None:
