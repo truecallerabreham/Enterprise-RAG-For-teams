@@ -20,6 +20,12 @@ wheels/
 
 # Docker
 sentinel_data/
+qdrant_storage/
+neo4j_data/
+neo4j_logs/
+
+# Managed repository cache
+.rag_workspace/
 
 # OS
 .DS_Store
