@@ -16,6 +16,7 @@ dependencies = [
     "google-genai>=1.74.0",
     "pydantic>=2.7.0",
     "voyageai>=0.2.0",
+    "sentence-transformers>=3.0.0",
 ]
 
 [tool.setuptools.packages]

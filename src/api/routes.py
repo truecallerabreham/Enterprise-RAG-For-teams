@@ -1,4 +1,8 @@
+import json
+from collections.abc import Generator
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from src.ingestion.git_workspace import GitWorkspace
 from src.ingestion.service import IngestionService
@@ -99,3 +103,48 @@ def repository_graph(repo_id: str) -> GraphSnapshot:
 @router.post("/query", response_model=QueryResponse)
 def query(payload: QueryRequest) -> QueryResponse:
     return query_service.answer(payload)
+
+
+@router.post("/query/stream")
+def query_stream(payload: QueryRequest) -> StreamingResponse:
+    """Server-Sent Events endpoint that streams assistant events then the final answer."""
+
+    def event_stream() -> Generator[str, None, None]:
+        def sse(event_type: str, data: dict) -> str:
+            return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+        try:
+            response = query_service.answer(payload)
+            # Emit each assistant event in sequence
+            for event in response.assistant_events:
+                yield sse("step", {"type": event.type, "message": event.message})
+            # Emit citations
+            for i, citation in enumerate(response.citations):
+                yield sse("citation", {
+                    "index": i + 1,
+                    "repo": citation.repo,
+                    "file": citation.file,
+                    "start_line": citation.start_line,
+                    "end_line": citation.end_line,
+                    "url": citation.url,
+                })
+            # Emit retrieved chunks
+            for chunk in response.retrieved_chunks:
+                yield sse("chunk", {
+                    "chunk_id": chunk.chunk_id,
+                    "repo_name": chunk.repo_name,
+                    "file_path": chunk.file_path,
+                    "start_line": chunk.start_line,
+                    "end_line": chunk.end_line,
+                    "score": chunk.score,
+                    "retrieval_sources": chunk.retrieval_sources,
+                    "summary": chunk.summary,
+                    "url": chunk.url,
+                })
+            # Emit final answer
+            yield sse("answer", {"text": response.answer})
+            yield sse("done", {})
+        except Exception as exc:
+            yield sse("error", {"message": str(exc)})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

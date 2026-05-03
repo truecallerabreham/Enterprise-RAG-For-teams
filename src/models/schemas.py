@@ -27,6 +27,8 @@ class RepositoryCreate(BaseModel):
 
 class RepositoryRecord(RepositoryCreate):
     id: str = Field(default_factory=lambda: str(uuid4()))
+    source_web_url: str | None = None
+    indexed_commit: str | None = None
     indexing_status: Literal["registered", "needs_permission", "indexing", "indexed", "failed"] = "registered"
     chunk_count: int = 0
     last_ingestion_id: str | None = None
@@ -77,6 +79,8 @@ class CodeChunk(ChunkCandidate):
     id: str
     repo_id: str
     repo_name: str
+    source_web_url: str | None = None
+    indexed_commit: str | None = None
     summary: str
     embedding: list[float] = Field(default_factory=list)
     sparse_terms: dict[str, int] = Field(default_factory=dict)
@@ -110,6 +114,7 @@ class Citation(BaseModel):
     file: str
     start_line: int
     end_line: int
+    url: str | None = None
 
 
 class SearchResult(BaseModel):
@@ -123,6 +128,7 @@ class SearchResult(BaseModel):
     retrieval_sources: list[str] = Field(default_factory=list)
     summary: str
     preview: str
+    url: str | None = None
 
 
 class QueryRequest(BaseModel):

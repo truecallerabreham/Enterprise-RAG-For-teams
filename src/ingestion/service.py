@@ -15,7 +15,8 @@ from src.models.schemas import (
     RepositoryRecord,
     SymbolRecord,
 )
-from src.query.retrieval import embed_text, sparse_terms
+from src.query.embedding import EmbeddingService
+from src.query.retrieval import sparse_terms
 from src.storage.memory import AppState
 
 
@@ -28,6 +29,7 @@ class IngestionService:
         self.state = state
         self.workspace = GitWorkspace()
         self.parser = CodeParser()
+        self.embedding = EmbeddingService()
         self.settings = get_settings()
 
     def ingest_repository(self, repo: RepositoryRecord, request: IngestionRequest) -> IngestionStatus:
@@ -66,6 +68,8 @@ class IngestionService:
         try:
             self._update_job(job, "cloning/fetching", 15, "ingesting", "Cloning or fetching repository in managed workspace.")
             repo_path = self.workspace.prepare(repo)
+            repo.indexed_commit = self.workspace.current_commit(repo_path)
+            self.state.save_state()
             self._update_job(job, "diffing", 30, "ingesting", "Checking changed files for incremental ingestion.")
             changes = self.workspace.changed_file_statuses(repo_path, request.base_ref, request.webhook_commit)
             self._update_job(job, "parsing", 45, "parsing", "Parsing source files and extracting code chunks.")
@@ -127,6 +131,8 @@ class IngestionService:
                     id=chunk_id,
                     repo_id=repo.id,
                     repo_name=repo.name,
+                    source_web_url=repo.source_web_url,
+                    indexed_commit=repo.indexed_commit,
                     file_path=candidate.file_path,
                     language=candidate.language,
                     symbol_name=candidate.symbol_name,
@@ -137,7 +143,9 @@ class IngestionService:
                     content_hash=candidate.content_hash,
                     raw_text=candidate.raw_text,
                     summary=summarize_chunk(candidate.raw_text),
-                    embedding=embed_text(f"{candidate.file_path} {candidate.symbol_name or ''} {candidate.raw_text}"),
+                    embedding=self.embedding.embed_document(
+                        f"{candidate.file_path} {candidate.symbol_name or ''} {candidate.raw_text}"
+                    ),
                     sparse_terms=sparse_terms(
                         f"{candidate.file_path} {candidate.symbol_name or ''} {candidate.raw_text}"
                     ),

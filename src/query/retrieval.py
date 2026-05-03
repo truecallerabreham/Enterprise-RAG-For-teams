@@ -2,10 +2,10 @@ import math
 import re
 from collections import Counter, defaultdict
 
+from src.config.settings import get_settings
 from src.models.schemas import CodeChunk, SearchResult
 from src.storage.memory import AppState
 
-VECTOR_SIZE = 64
 RRF_K = 60
 
 
@@ -18,17 +18,18 @@ def sparse_terms(text: str) -> dict[str, int]:
 
 
 def embed_text(text: str) -> list[float]:
-    vector = [0.0] * VECTOR_SIZE
+    vector_size = get_settings().vector_size
+    vector = [0.0] * vector_size
     for token in tokenize(text):
-        index = stable_index(token)
+        index = stable_index(token, vector_size)
         vector[index] += 1.0
     return normalize(vector)
 
 
-def stable_index(token: str) -> int:
+def stable_index(token: str, vector_size: int) -> int:
     value = 0
     for char in token:
-        value = (value * 31 + ord(char)) % VECTOR_SIZE
+        value = (value * 31 + ord(char)) % vector_size
     return value
 
 
@@ -45,8 +46,11 @@ def cosine(left: list[float], right: list[float]) -> float:
     return sum(a * b for a, b in zip(left, right))
 
 
-def dense_search(state: AppState, question: str, repo_ids: set[str]) -> list[SearchResult]:
-    query_vector = embed_text(question)
+def dense_search(state: AppState, query_vector: list[float], repo_ids: set[str]) -> list[SearchResult]:
+    if state.vector_store is not None:
+        qdrant_results = state.vector_search(query_vector, repo_ids, limit=50)
+        if qdrant_results:
+            return qdrant_results
     results: list[SearchResult] = []
     for chunk in filtered_chunks(state, repo_ids):
         score = cosine(query_vector, chunk.embedding)
@@ -57,11 +61,20 @@ def dense_search(state: AppState, question: str, repo_ids: set[str]) -> list[Sea
 
 def sparse_search(state: AppState, question: str, repo_ids: set[str]) -> list[SearchResult]:
     terms = tokenize(question)
+    chunks = filtered_chunks(state, repo_ids)
+    doc_count = max(len(chunks), 1)
+    doc_freq: Counter[str] = Counter()
+    doc_lengths: dict[str, int] = {}
+    for chunk in chunks:
+        doc_lengths[chunk.id] = sum(chunk.sparse_terms.values())
+        for term in chunk.sparse_terms:
+            doc_freq[term] += 1
+    avg_doc_length = sum(doc_lengths.values()) / max(len(doc_lengths), 1)
     results: list[SearchResult] = []
-    for chunk in filtered_chunks(state, repo_ids):
+    for chunk in chunks:
         score = 0.0
         for term in terms:
-            score += chunk.sparse_terms.get(term, 0)
+            score += bm25(term, chunk, doc_freq, doc_count, doc_lengths.get(chunk.id, 0), avg_doc_length)
             if chunk.symbol_name and term in chunk.symbol_name.lower():
                 score += 3.0
             if term in chunk.file_path.lower():
@@ -69,6 +82,24 @@ def sparse_search(state: AppState, question: str, repo_ids: set[str]) -> list[Se
         if score > 0:
             results.append(to_result(chunk, score, "sparse"))
     return sorted(results, key=lambda result: result.score, reverse=True)
+
+
+def bm25(
+    term: str,
+    chunk: CodeChunk,
+    doc_freq: Counter[str],
+    doc_count: int,
+    doc_length: int,
+    avg_doc_length: float,
+    k1: float = 1.5,
+    b: float = 0.75,
+) -> float:
+    frequency = chunk.sparse_terms.get(term, 0)
+    if frequency == 0:
+        return 0.0
+    idf = math.log(1 + (doc_count - doc_freq.get(term, 0) + 0.5) / (doc_freq.get(term, 0) + 0.5))
+    denominator = frequency + k1 * (1 - b + b * doc_length / max(avg_doc_length, 1))
+    return idf * (frequency * (k1 + 1)) / denominator
 
 
 def reciprocal_rank_fusion(result_sets: list[list[SearchResult]], limit: int) -> list[SearchResult]:
@@ -132,4 +163,13 @@ def to_result(chunk: CodeChunk, score: float, source: str) -> SearchResult:
         retrieval_sources=[source],
         summary=chunk.summary,
         preview=chunk.raw_text[:500],
+        url=source_url(chunk),
     )
+
+
+def source_url(chunk: CodeChunk) -> str | None:
+    if not chunk.source_web_url:
+        return None
+    ref = chunk.indexed_commit or "HEAD"
+    path = chunk.file_path.replace("\\", "/")
+    return f"{chunk.source_web_url}/blob/{ref}/{path}#L{chunk.start_line}-L{chunk.end_line}"

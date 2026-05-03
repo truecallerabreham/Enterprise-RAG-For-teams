@@ -4,6 +4,7 @@ from threading import RLock
 
 from src.graph.memory import MemoryGraph
 from src.config.settings import get_settings
+from src.ingestion.git_workspace import source_web_url
 from src.models.schemas import CodeChunk, IngestionStatus, RepositoryCreate, RepositoryRecord
 
 
@@ -29,6 +30,7 @@ class AppState:
             if existing is not None:
                 return existing
             repo = RepositoryRecord(**payload.model_dump())
+            repo.source_web_url = source_web_url(repo.git_url)
             self.repositories[repo.id] = repo
             self.save_state()
             return repo
@@ -112,6 +114,8 @@ class AppState:
             repo.id: repo for repo in (RepositoryRecord.model_validate(item) for item in data.get("repositories", []))
         }
         for repo in self.repositories.values():
+            if repo.source_web_url is None:
+                repo.source_web_url = source_web_url(repo.git_url)
             repo.chunk_count = 0
             if repo.indexing_status in {"indexing", "indexed"}:
                 repo.indexing_status = "registered"
@@ -127,16 +131,27 @@ class AppState:
             return "memory"
         return self.vector_store.health()
 
-    def _build_vector_store(self):
-        if self.settings.vector_store.lower() != "qdrant":
-            return None
-        try:
-            from src.storage.qdrant_store import QdrantChunkStore
+    def vector_search(self, query_vector: list[float], repo_ids: set[str], limit: int):
+        if self.vector_store is None:
+            return []
+        return self.vector_store.search(query_vector, repo_ids, limit)
 
-            return QdrantChunkStore()
-        except Exception as exc:
-            self.vector_store_error = str(exc)
-            return None
+    def _build_vector_store(self):
+        if self.settings.vector_store.lower() == "qdrant":
+            try:
+                from src.storage.qdrant_store import QdrantChunkStore
+                return QdrantChunkStore()
+            except Exception as exc:
+                self.vector_store_error = str(exc)
+                return None
+        elif self.settings.vector_store.lower() == "chroma":
+            try:
+                from src.storage.chroma_store import ChromaChunkStore
+                return ChromaChunkStore()
+            except Exception as exc:
+                self.vector_store_error = str(exc)
+                return None
+        return None
 
 
 app_state = AppState()

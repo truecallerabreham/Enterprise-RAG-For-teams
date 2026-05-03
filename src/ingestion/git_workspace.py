@@ -30,6 +30,9 @@ class GitWorkspace:
         self._run(["git", "pull", "--ff-only"], repo_path)
         return repo_path
 
+    def current_commit(self, repo_path: Path) -> str:
+        return self._run(["git", "rev-parse", "HEAD"], repo_path).strip()
+
     def validate_remote(self, repo: RepositoryCreate) -> tuple[bool, str]:
         git_url = self._url_with_token(repo)
         try:
@@ -86,3 +89,14 @@ class GitWorkspace:
             detail = (result.stderr or result.stdout or "No Git error output was provided.").strip()
             raise RuntimeError(f"{command} failed with exit code {result.returncode}: {detail}")
         return result.stdout
+
+
+def source_web_url(git_url: str) -> str | None:
+    parsed = urlparse(git_url)
+    if parsed.scheme in {"http", "https"} and parsed.netloc.lower() == "github.com":
+        path = parsed.path.removesuffix(".git").strip("/")
+        return f"https://github.com/{path}"
+    if git_url.startswith("git@github.com:"):
+        path = git_url.removeprefix("git@github.com:").removesuffix(".git")
+        return f"https://github.com/{path}"
+    return None
