@@ -1,39 +1,54 @@
 import os
 from fastapi import FastAPI, Request, BackgroundTasks
 import uvicorn
+from dotenv import load_dotenv
+
+# Import our modular components
+from src.ingestion.parser import CodeParser
+from src.ingestion.processor import ChunkProcessor
+from src.storage.qdrant_client import VectorStoreManager
+from src.storage.graph_client import GraphStoreManager
+
+# Load API Keys
+load_dotenv()
 
 app = FastAPI(title="Enterprise RAG Webhook", version="1.0.0")
+
+# Initialize global managers
+parser = CodeParser()
+processor = ChunkProcessor()
+v_db = VectorStoreManager()
+g_db = GraphStoreManager()
 
 def process_github_push(payload: dict):
     """
     Background task to orchestrate the ingestion pipeline.
-    1. Extract changed files from the webhook payload.
-    2. Fetch the raw code for those files.
-    3. Run CodeParser to extract AST chunks.
-    4. Run ChunkProcessor to get Summaries and Dense/Sparse Vectors.
-    5. Upsert to Qdrant (VectorStoreManager).
-    6. Upsert to Neo4j (GraphStoreManager).
     """
     repo_name = payload.get("repository", {}).get("full_name", "unknown/repo")
-    print(f"--- [Webhook Triggered] Processing push for {repo_name} ---")
+    print(f"--- [Webhook] Processing push for {repo_name} ---")
     
-    # In a fully connected environment, we would instantiate our classes here:
-    # from src.ingestion.parser import CodeParser
-    # from src.ingestion.processor import ChunkProcessor
-    # from src.storage.qdrant_client import VectorStoreManager
-    # from src.storage.graph_client import GraphStoreManager
+    # In a real GitHub webhook, 'commits' contains the list of changed files
+    # For this implementation, we simulate processing a set of files
+    files_to_process = [
+        {"path": "src/auth.py", "language": "python", "content": "def login():\n    return True"},
+        {"path": "src/utils.py", "language": "python", "content": "def format_date():\n    pass"}
+    ]
     
-    # parser = CodeParser()
-    # processor = ChunkProcessor()
-    # v_db = VectorStoreManager()
-    # g_db = GraphStoreManager()
-    
-    # Simulate processing
-    print(f"1. Parsing diffs for {repo_name}...")
-    print(f"2. Generating Context Summaries and Voyage Embeddings...")
-    print(f"3. Updating Qdrant RBAC collections...")
-    print(f"4. Updating Neo4j Symbol Graph...")
-    print("--- [Webhook Completed] Ingestion pipeline successful ---")
+    # 1. Parse -> 2. Process -> 3. Store
+    for file in files_to_process:
+        print(f" -> Slicing {file['path']} into AST chunks...")
+        chunks = parser.get_chunks(file["content"], file["language"])
+        
+        print(f" -> Generating Summaries & Voyage Embeddings for {len(chunks)} chunks...")
+        processed_chunks = processor.process_chunks(chunks)
+        
+        print(f" -> Upserting to Qdrant (RBAC: engineering_team)...")
+        v_db.upsert_chunks(processed_chunks, repo_name=repo_name, allowed_groups=["engineering_team"])
+        
+        print(f" -> Updating Symbol Graph...")
+        g_db.upsert_symbols(processed_chunks, repo_name=repo_name, file_path=file["path"])
+
+    print(f"--- [Webhook] Ingestion successful for {repo_name} ---")
 
 @app.post("/webhook")
 async def github_webhook(request: Request, background_tasks: BackgroundTasks):
