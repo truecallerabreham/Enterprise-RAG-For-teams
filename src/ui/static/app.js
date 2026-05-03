@@ -12,7 +12,11 @@ const els = {
   citations: document.querySelector("#citations"),
   retrieved: document.querySelector("#retrieved"),
   graphOutput: document.querySelector("#graphOutput"),
+  progressLabel: document.querySelector("#progressLabel"),
+  progressBar: document.querySelector("#progressBar"),
 };
+
+const renderedEventKeys = new Set();
 
 document.querySelector("#refreshRepos").addEventListener("click", loadRepositories);
 document.querySelector("#requestIngest").addEventListener("click", () => ingestSelected(false));
@@ -107,13 +111,30 @@ async function ingestSelected(confirm) {
     body: { confirm },
   });
   renderEvents(job.assistant_events);
+  renderProgress(job);
   if (job.errors?.length) {
     for (const error of job.errors) {
       addEvent("failed", error);
     }
   }
+  if (job.status === "running") {
+    pollIngestion(job.id, repoId);
+  }
   await loadRepositories();
   selectRepo(repoId);
+}
+
+async function pollIngestion(jobId, repoId) {
+  let done = false;
+  while (!done) {
+    await sleep(1000);
+    const job = await request(`/ingestions/${jobId}`);
+    renderProgress(job);
+    renderEvents(job.assistant_events);
+    done = job.status === "completed" || job.status === "failed";
+    await loadRepositories();
+    selectRepo(repoId);
+  }
 }
 
 async function inspectGraph() {
@@ -158,8 +179,18 @@ function renderAnswer(response) {
 
 function renderEvents(events) {
   for (const event of events || []) {
-    addEvent(event.type, event.message);
+    const key = `${event.created_at}:${event.type}:${event.message}`;
+    if (!renderedEventKeys.has(key)) {
+      renderedEventKeys.add(key);
+      addEvent(event.type, event.message);
+    }
   }
+}
+
+function renderProgress(job) {
+  const progress = Math.max(0, Math.min(100, job.progress_percent || 0));
+  els.progressBar.style.width = `${progress}%`;
+  els.progressLabel.textContent = `${job.status}: ${job.current_step || "working"} (${progress}%)`;
 }
 
 function addEvent(type, message) {
@@ -201,6 +232,10 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 boot().catch((error) => addEvent("failed", error.message));

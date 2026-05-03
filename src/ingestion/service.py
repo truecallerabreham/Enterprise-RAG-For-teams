@@ -1,4 +1,5 @@
 import hashlib
+from threading import Thread
 from pathlib import Path
 from uuid import uuid4
 
@@ -34,6 +35,8 @@ class IngestionService:
             id=str(uuid4()),
             repo_id=repo.id,
             status="needs_permission" if not request.confirm else "running",
+            current_step="waiting for permission" if not request.confirm else "queued",
+            progress_percent=0 if not request.confirm else 5,
             assistant_events=[
                 AssistantEvent(
                     type="needs_permission" if not request.confirm else "ingesting",
@@ -45,19 +48,32 @@ class IngestionService:
                 )
             ],
         )
-        self.state.ingestions[job.id] = job
         repo.last_ingestion_id = job.id
         if not request.confirm:
             repo.indexing_status = "needs_permission"
+            self.state.save_ingestion(job)
             return job
 
+        repo.indexing_status = "indexing"
+        repo.last_error = None
+        self.state.save_ingestion(job)
+        Thread(target=self._run_ingestion_job, args=(repo.id, request, job.id), daemon=True).start()
+        return job
+
+    def _run_ingestion_job(self, repo_id: str, request: IngestionRequest, job_id: str) -> None:
+        repo = self.state.repositories[repo_id]
+        job = self.state.ingestions[job_id]
         try:
-            repo.indexing_status = "indexing"
-            repo.last_error = None
+            self._update_job(job, "cloning/fetching", 15, "ingesting", "Cloning or fetching repository in managed workspace.")
             repo_path = self.workspace.prepare(repo)
+            self._update_job(job, "diffing", 30, "ingesting", "Checking changed files for incremental ingestion.")
             changes = self.workspace.changed_file_statuses(repo_path, request.base_ref, request.webhook_commit)
+            self._update_job(job, "parsing", 45, "parsing", "Parsing source files and extracting code chunks.")
             chunks = self._ingest_path(repo, repo_path, changes=changes or None)
+            self._update_job(job, "indexing", 80, "indexing", "Writing chunks, symbols, and retrieval metadata.")
             job.status = "completed"
+            job.current_step = "completed"
+            job.progress_percent = 100
             job.files_seen = len({chunk.file_path for chunk in chunks})
             job.chunks_indexed = self.state.repositories[repo.id].chunk_count
             repo.indexing_status = "indexed"
@@ -69,10 +85,26 @@ class IngestionService:
             )
         except Exception as exc:
             job.status = "failed"
+            job.current_step = "failed"
+            job.progress_percent = 100
             job.errors.append(str(exc))
             repo.indexing_status = "failed"
             repo.last_error = str(exc)
             job.assistant_events.append(AssistantEvent(type="failed", message=f"Ingestion failed: {exc}"))
+        self.state.save_ingestion(job)
+
+    def _update_job(
+        self,
+        job: IngestionStatus,
+        step: str,
+        progress_percent: int,
+        event_type: str,
+        message: str,
+    ) -> None:
+        job.current_step = step
+        job.progress_percent = progress_percent
+        job.assistant_events.append(AssistantEvent(type=event_type, message=message))
+        self.state.save_ingestion(job)
         return job
 
     def _ingest_path(self, repo: RepositoryRecord, repo_path: Path, changes: list | None = None) -> list[CodeChunk]:

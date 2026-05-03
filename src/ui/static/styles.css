@@ -139,6 +139,33 @@ textarea {
   gap: 10px;
 }
 
+.progress-wrap {
+  display: grid;
+  gap: 8px;
+}
+
+.progress-label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.progress-track {
+  width: 100%;
+  height: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #eef2f7;
+}
+
+.progress-bar {
+  width: 0%;
+  height: 100%;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
 .list,
 .timeline {
   display: grid;

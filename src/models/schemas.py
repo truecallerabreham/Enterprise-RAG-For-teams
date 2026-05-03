@@ -51,6 +51,8 @@ class IngestionStatus(BaseModel):
     id: str
     repo_id: str
     status: Literal["needs_permission", "running", "completed", "failed"]
+    current_step: str = "created"
+    progress_percent: int = 0
     files_seen: int = 0
     chunks_indexed: int = 0
     errors: list[str] = Field(default_factory=list)

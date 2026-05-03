@@ -1,3 +1,7 @@
+import json
+from pathlib import Path
+from threading import RLock
+
 from src.graph.memory import MemoryGraph
 from src.config.settings import get_settings
 from src.models.schemas import CodeChunk, IngestionStatus, RepositoryCreate, RepositoryRecord
@@ -6,6 +10,8 @@ from src.models.schemas import CodeChunk, IngestionStatus, RepositoryCreate, Rep
 class AppState:
     def __init__(self) -> None:
         self.settings = get_settings()
+        self.lock = RLock()
+        self.state_path = self.settings.workspace_root / "app_state.json"
         self.repositories: dict[str, RepositoryRecord] = {}
         self.ingestions: dict[str, IngestionStatus] = {}
         self.chunks: dict[str, CodeChunk] = {}
@@ -13,14 +19,17 @@ class AppState:
         self.graph = MemoryGraph()
         self.vector_store_error: str | None = None
         self.vector_store = self._build_vector_store()
+        self.load_state()
 
     def add_repository(self, payload: RepositoryCreate) -> RepositoryRecord:
-        existing = self.find_repository_by_url(payload.git_url)
-        if existing is not None:
-            return existing
-        repo = RepositoryRecord(**payload.model_dump())
-        self.repositories[repo.id] = repo
-        return repo
+        with self.lock:
+            existing = self.find_repository_by_url(payload.git_url)
+            if existing is not None:
+                return existing
+            repo = RepositoryRecord(**payload.model_dump())
+            self.repositories[repo.id] = repo
+            self.save_state()
+            return repo
 
     def find_repository_by_url(self, git_url: str) -> RepositoryRecord | None:
         for repo in self.repositories.values():
@@ -29,25 +38,27 @@ class AppState:
         return None
 
     def upsert_chunks(self, chunks: list[CodeChunk]) -> None:
-        for chunk in chunks:
-            self.chunks[chunk.id] = chunk
+        with self.lock:
+            for chunk in chunks:
+                self.chunks[chunk.id] = chunk
         if self.vector_store is not None:
             self.vector_store.upsert_chunks(chunks)
-        for repo_id in {chunk.repo_id for chunk in chunks}:
-            self.refresh_repository_counts(repo_id)
+            for repo_id in {chunk.repo_id for chunk in chunks}:
+                self.refresh_repository_counts(repo_id)
 
     def delete_chunks(self, chunk_ids: list[str]) -> None:
-        if not chunk_ids:
-            return
-        for chunk_id in chunk_ids:
-            self.chunks.pop(chunk_id, None)
-        for repo_id, repo_chunk_ids in list(self.repo_chunks.items()):
-            self.repo_chunks[repo_id] = [chunk_id for chunk_id in repo_chunk_ids if chunk_id not in chunk_ids]
-        self.graph.remove_chunks(chunk_ids)
+        with self.lock:
+            if not chunk_ids:
+                return
+            for chunk_id in chunk_ids:
+                self.chunks.pop(chunk_id, None)
+            for repo_id, repo_chunk_ids in list(self.repo_chunks.items()):
+                self.repo_chunks[repo_id] = [chunk_id for chunk_id in repo_chunk_ids if chunk_id not in chunk_ids]
+            self.graph.remove_chunks(chunk_ids)
         if self.vector_store is not None:
             self.vector_store.delete_chunks(chunk_ids)
-        for repo_id in list(self.repositories):
-            self.refresh_repository_counts(repo_id)
+            for repo_id in list(self.repositories):
+                self.refresh_repository_counts(repo_id)
 
     def chunk_ids_for_files(self, repo_id: str, file_paths: set[str]) -> list[str]:
         return [
@@ -61,6 +72,36 @@ class AppState:
         if repo is None:
             return
         repo.chunk_count = len([chunk_id for chunk_id in self.repo_chunks.get(repo_id, []) if chunk_id in self.chunks])
+        self.save_state()
+
+    def save_ingestion(self, job: IngestionStatus) -> None:
+        with self.lock:
+            self.ingestions[job.id] = job
+            self.save_state()
+
+    def save_state(self) -> None:
+        data = {
+            "repositories": [repo.model_dump(mode="json") for repo in self.repositories.values()],
+            "ingestions": [job.model_dump(mode="json") for job in self.ingestions.values()],
+        }
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.state_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    def load_state(self) -> None:
+        if not self.state_path.exists():
+            return
+        data = json.loads(self.state_path.read_text(encoding="utf-8"))
+        self.repositories = {
+            repo.id: repo for repo in (RepositoryRecord.model_validate(item) for item in data.get("repositories", []))
+        }
+        for repo in self.repositories.values():
+            repo.chunk_count = 0
+            if repo.indexing_status in {"indexing", "indexed"}:
+                repo.indexing_status = "registered"
+                repo.last_error = "Server restarted; run ingestion again to rebuild the in-memory index."
+        self.ingestions = {
+            job.id: job for job in (IngestionStatus.model_validate(item) for item in data.get("ingestions", []))
+        }
 
     def vector_store_status(self) -> str:
         if self.vector_store is None:
