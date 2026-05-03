@@ -4,7 +4,7 @@ from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 from src.config.settings import get_settings
-from src.models.schemas import RepositoryRecord
+from src.models.schemas import RepositoryCreate, RepositoryRecord
 
 
 class GitFileChange:
@@ -29,6 +29,14 @@ class GitWorkspace:
         self._run(["git", "checkout", repo.default_branch], repo_path)
         self._run(["git", "pull", "--ff-only"], repo_path)
         return repo_path
+
+    def validate_remote(self, repo: RepositoryCreate) -> tuple[bool, str]:
+        git_url = self._url_with_token(repo)
+        try:
+            self._run(["git", "ls-remote", "--exit-code", "--heads", git_url, repo.default_branch], self.root)
+            return True, "Git remote and branch are reachable."
+        except RuntimeError as exc:
+            return False, str(exc)
 
     def changed_files(self, repo_path: Path, base_ref: str | None, head_ref: str | None) -> list[str]:
         if not base_ref or not head_ref:
@@ -72,5 +80,9 @@ class GitWorkspace:
         return urlunparse(parsed._replace(netloc=netloc))
 
     def _run(self, args: list[str], cwd: Path) -> str:
-        result = subprocess.run(args, cwd=cwd, check=True, capture_output=True, text=True)
+        result = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+        if result.returncode != 0:
+            command = " ".join(args[:3])
+            detail = (result.stderr or result.stdout or "No Git error output was provided.").strip()
+            raise RuntimeError(f"{command} failed with exit code {result.returncode}: {detail}")
         return result.stdout

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
+from src.ingestion.git_workspace import GitWorkspace
 from src.ingestion.service import IngestionService
 from src.models.schemas import (
     GitWebhookRequest,
@@ -18,6 +19,7 @@ from src.storage.memory import app_state
 router = APIRouter()
 ingestion_service = IngestionService(app_state)
 query_service = QueryService(app_state)
+git_workspace = GitWorkspace()
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -31,12 +33,30 @@ def health() -> HealthResponse:
 
 @router.post("/repositories", response_model=RepositoryRecord)
 def register_repository(payload: RepositoryCreate) -> RepositoryRecord:
+    valid, message = git_workspace.validate_remote(payload)
+    if not valid:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Repository validation failed. Use a real reachable Git URL and branch. "
+                "For private repositories, make sure the credential env var exists in the server process. "
+                f"Git said: {message}"
+            ),
+        )
     return app_state.add_repository(payload)
 
 
 @router.get("/repositories", response_model=list[RepositoryRecord])
 def list_repositories() -> list[RepositoryRecord]:
     return list(app_state.repositories.values())
+
+
+@router.delete("/repositories/{repo_id}", response_model=dict)
+def delete_repository(repo_id: str) -> dict:
+    deleted = app_state.delete_repository(repo_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Repository not found")
+    return {"deleted": True}
 
 
 @router.post("/repositories/{repo_id}/ingest", response_model=IngestionStatus)

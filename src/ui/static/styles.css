@@ -139,6 +139,14 @@ textarea {
   gap: 10px;
 }
 
+.compact-row {
+  margin-top: 10px;
+}
+
+.compact-row button {
+  padding: 6px 9px;
+}
+
 .progress-wrap {
   display: grid;
   gap: 8px;

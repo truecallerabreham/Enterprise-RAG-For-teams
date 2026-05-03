@@ -22,6 +22,16 @@ document.querySelector("#refreshRepos").addEventListener("click", loadRepositori
 document.querySelector("#requestIngest").addEventListener("click", () => ingestSelected(false));
 document.querySelector("#confirmIngest").addEventListener("click", () => ingestSelected(true));
 document.querySelector("#inspectGraph").addEventListener("click", inspectGraph);
+document.querySelector("#repoList").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-delete-repo]");
+  if (!button) {
+    return;
+  }
+  const repoId = button.getAttribute("data-delete-repo");
+  await request(`/repositories/${repoId}`, { method: "DELETE" });
+  addEvent("completed", "Repository removed from the registry.");
+  await loadRepositories();
+});
 document.querySelector("#clearEvents").addEventListener("click", () => {
   els.events.innerHTML = "";
 });
@@ -84,7 +94,10 @@ async function loadRepositories() {
       <div class="meta">${escapeHtml(repo.git_url)}</div>
       <div class="meta">${escapeHtml(repo.default_branch)} | ${escapeHtml(repo.visibility)}</div>
       <div class="meta">Status: ${escapeHtml(repo.indexing_status)} | chunks: ${repo.chunk_count}</div>
-      ${repo.last_error ? `<div class="meta error-text">${escapeHtml(repo.last_error)}</div>` : ""}`;
+      ${repo.last_error ? `<div class="meta error-text">${escapeHtml(repo.last_error)}</div>` : ""}
+      <div class="button-row compact-row">
+        <button type="button" data-delete-repo="${escapeHtml(repo.id)}">Delete</button>
+      </div>`;
     els.repoList.appendChild(item);
 
     const option = document.createElement("option");

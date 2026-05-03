@@ -99,8 +99,10 @@ Register a public Git repository:
 ```powershell
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/repositories `
   -ContentType "application/json" `
-  -Body '{"name":"demo","git_url":"https://github.com/example/demo.git","default_branch":"main","visibility":"public"}'
+  -Body '{"name":"fastapi","git_url":"https://github.com/fastapi/fastapi.git","default_branch":"master","visibility":"public"}'
 ```
+
+Registration validates the Git remote and branch with `git ls-remote`. Placeholder URLs such as `https://github.com/example/demo-api.git` are rejected because they are not real reachable repositories. For private repositories, set the token in the server environment and put that environment variable name in the `credential_env_var` field.
 
 Manual ingestion is permission-gated. First call with `confirm: false` to get the assistant permission event, then call with `confirm: true` when you want the backend to clone/fetch and index the repository.
 

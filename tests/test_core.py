@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import subprocess
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -12,7 +13,23 @@ from src.models.schemas import Citation, RepositoryCreate, SearchResult
 from src.query.citations import validate_citations
 from src.query.retrieval import reciprocal_rank_fusion
 from src.storage.qdrant_store import chunk_payload, qdrant_point_id
-from src.storage.memory import AppState
+from src.storage.memory import AppState, app_state
+
+app_state.persist = False
+app_state.repositories.clear()
+app_state.ingestions.clear()
+app_state.chunks.clear()
+app_state.repo_chunks.clear()
+
+
+def make_git_repo(root: Path) -> str:
+    subprocess.run(["git", "init", "-b", "main"], cwd=root, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=root, check=True)
+    (root / "README.md").write_text("# Test Repo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=root, check=True, capture_output=True, text=True)
+    return root.as_posix()
 
 
 class ParserTests(unittest.TestCase):
@@ -58,7 +75,7 @@ class ParserTests(unittest.TestCase):
 
 class IngestionTests(unittest.TestCase):
     def test_ingestion_indexes_local_workspace_path(self) -> None:
-        state = AppState()
+        state = AppState(persist=False)
         repo = state.add_repository(
             RepositoryCreate(name="demo", git_url="https://github.com/example/demo.git", default_branch="main")
         )
@@ -75,7 +92,7 @@ class IngestionTests(unittest.TestCase):
         self.assertEqual(repo.chunk_count, 1)
 
     def test_ingestion_populates_graph_symbols_and_edges(self) -> None:
-        state = AppState()
+        state = AppState(persist=False)
         repo = state.add_repository(
             RepositoryCreate(name="demo-graph", git_url="https://github.com/example/demo-graph.git")
         )
@@ -96,7 +113,7 @@ class IngestionTests(unittest.TestCase):
         self.assertIn("validate_user", {edge.target_symbol for edge in edges})
 
     def test_incremental_ingestion_removes_deleted_file_chunks(self) -> None:
-        state = AppState()
+        state = AppState(persist=False)
         repo = state.add_repository(
             RepositoryCreate(name="demo-delete", git_url="https://github.com/example/demo-delete.git")
         )
@@ -115,7 +132,7 @@ class IngestionTests(unittest.TestCase):
         self.assertEqual(state.chunks, {})
 
     def test_incremental_ingestion_replaces_modified_file_chunks(self) -> None:
-        state = AppState()
+        state = AppState(persist=False)
         repo = state.add_repository(
             RepositoryCreate(name="demo-modify", git_url="https://github.com/example/demo-modify.git")
         )
@@ -176,7 +193,7 @@ class RetrievalTests(unittest.TestCase):
 
 class StorageTests(unittest.TestCase):
     def test_qdrant_payload_keeps_original_chunk_id(self) -> None:
-        state = AppState()
+        state = AppState(persist=False)
         repo = state.add_repository(
             RepositoryCreate(name="demo-storage", git_url="https://github.com/example/demo-storage.git")
         )
@@ -199,10 +216,12 @@ class ApiTests(unittest.TestCase):
         health = client.get("/health")
         self.assertEqual(health.status_code, 200)
 
-        repo_response = client.post(
-            "/repositories",
-            json={"name": "demo-api", "git_url": "https://github.com/example/demo-api.git"},
-        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            git_url = make_git_repo(Path(temp_dir))
+            repo_response = client.post(
+                "/repositories",
+                json={"name": "demo-api", "git_url": git_url},
+            )
         self.assertEqual(repo_response.status_code, 200)
         repo_id = repo_response.json()["id"]
 
@@ -216,10 +235,12 @@ class ApiTests(unittest.TestCase):
 
     def test_query_unindexed_repo_explains_ingestion_requirement(self) -> None:
         client = TestClient(app)
-        repo_response = client.post(
-            "/repositories",
-            json={"name": "unindexed-api", "git_url": "https://github.com/example/unindexed-api.git"},
-        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            git_url = make_git_repo(Path(temp_dir))
+            repo_response = client.post(
+                "/repositories",
+                json={"name": "unindexed-api", "git_url": git_url},
+            )
         repo_id = repo_response.json()["id"]
 
         query = client.post("/query", json={"question": "where is search implemented?", "repo_ids": [repo_id]})
@@ -231,10 +252,12 @@ class ApiTests(unittest.TestCase):
 
     def test_graph_endpoint_returns_repository_snapshot(self) -> None:
         client = TestClient(app)
-        repo_response = client.post(
-            "/repositories",
-            json={"name": "graph-api", "git_url": "https://github.com/example/graph-api.git"},
-        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            git_url = make_git_repo(Path(temp_dir))
+            repo_response = client.post(
+                "/repositories",
+                json={"name": "graph-api", "git_url": git_url},
+            )
         repo_id = repo_response.json()["id"]
 
         graph = client.get(f"/repositories/{repo_id}/graph")
@@ -254,15 +277,28 @@ class ApiTests(unittest.TestCase):
 
     def test_repository_list_endpoint_returns_registered_repos(self) -> None:
         client = TestClient(app)
-        client.post(
-            "/repositories",
-            json={"name": "list-api", "git_url": "https://github.com/example/list-api.git"},
-        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            git_url = make_git_repo(Path(temp_dir))
+            client.post(
+                "/repositories",
+                json={"name": "list-api", "git_url": git_url},
+            )
 
         repos = client.get("/repositories")
 
         self.assertEqual(repos.status_code, 200)
         self.assertTrue(any(repo["name"] == "list-api" for repo in repos.json()))
+
+    def test_api_rejects_unreachable_repository_url(self) -> None:
+        client = TestClient(app)
+
+        response = client.post(
+            "/repositories",
+            json={"name": "fake-api", "git_url": "https://github.com/example/demo-api.git"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Repository validation failed", response.json()["detail"])
 
 
 if __name__ == "__main__":

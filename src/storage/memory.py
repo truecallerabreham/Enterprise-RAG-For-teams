@@ -8,8 +8,9 @@ from src.models.schemas import CodeChunk, IngestionStatus, RepositoryCreate, Rep
 
 
 class AppState:
-    def __init__(self) -> None:
+    def __init__(self, persist: bool = True) -> None:
         self.settings = get_settings()
+        self.persist = persist
         self.lock = RLock()
         self.state_path = self.settings.workspace_root / "app_state.json"
         self.repositories: dict[str, RepositoryRecord] = {}
@@ -19,7 +20,8 @@ class AppState:
         self.graph = MemoryGraph()
         self.vector_store_error: str | None = None
         self.vector_store = self._build_vector_store()
-        self.load_state()
+        if self.persist:
+            self.load_state()
 
     def add_repository(self, payload: RepositoryCreate) -> RepositoryRecord:
         with self.lock:
@@ -30,6 +32,19 @@ class AppState:
             self.repositories[repo.id] = repo
             self.save_state()
             return repo
+
+    def delete_repository(self, repo_id: str) -> bool:
+        with self.lock:
+            repo = self.repositories.pop(repo_id, None)
+            if repo is None:
+                return False
+            self.delete_chunks(self.repo_chunks.get(repo_id, []))
+            self.repo_chunks.pop(repo_id, None)
+            self.ingestions = {
+                job_id: job for job_id, job in self.ingestions.items() if job.repo_id != repo_id
+            }
+            self.save_state()
+            return True
 
     def find_repository_by_url(self, git_url: str) -> RepositoryRecord | None:
         for repo in self.repositories.values():
@@ -43,8 +58,8 @@ class AppState:
                 self.chunks[chunk.id] = chunk
         if self.vector_store is not None:
             self.vector_store.upsert_chunks(chunks)
-            for repo_id in {chunk.repo_id for chunk in chunks}:
-                self.refresh_repository_counts(repo_id)
+        for repo_id in {chunk.repo_id for chunk in chunks}:
+            self.refresh_repository_counts(repo_id)
 
     def delete_chunks(self, chunk_ids: list[str]) -> None:
         with self.lock:
@@ -57,8 +72,8 @@ class AppState:
             self.graph.remove_chunks(chunk_ids)
         if self.vector_store is not None:
             self.vector_store.delete_chunks(chunk_ids)
-            for repo_id in list(self.repositories):
-                self.refresh_repository_counts(repo_id)
+        for repo_id in list(self.repositories):
+            self.refresh_repository_counts(repo_id)
 
     def chunk_ids_for_files(self, repo_id: str, file_paths: set[str]) -> list[str]:
         return [
@@ -80,6 +95,8 @@ class AppState:
             self.save_state()
 
     def save_state(self) -> None:
+        if not self.persist:
+            return
         data = {
             "repositories": [repo.model_dump(mode="json") for repo in self.repositories.values()],
             "ingestions": [job.model_dump(mode="json") for job in self.ingestions.values()],
