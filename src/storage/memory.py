@@ -18,7 +18,8 @@ class AppState:
         self.ingestions: dict[str, IngestionStatus] = {}
         self.chunks: dict[str, CodeChunk] = {}
         self.repo_chunks: dict[str, list[str]] = {}
-        self.graph = MemoryGraph()
+        self.graph_error: str | None = None
+        self.graph = self._build_graph_store()
         self.vector_store_error: str | None = None
         self.vector_store = self._build_vector_store()
         if self.persist:
@@ -152,6 +153,32 @@ class AppState:
                 self.vector_store_error = str(exc)
                 return None
         return None
+
+    def _build_graph_store(self):
+        if self.settings.graph_provider.lower() == "neo4j":
+            try:
+                from src.graph.neo4j_store import Neo4jGraphStore
+                return Neo4jGraphStore(
+                    uri=self.settings.neo4j_uri,
+                    user=self.settings.neo4j_user,
+                    password=self.settings.neo4j_password,
+                    database=self.settings.neo4j_database,
+                )
+            except Exception as exc:
+                self.graph_error = str(exc)
+                return MemoryGraph()
+        return MemoryGraph()
+
+    def graph_store_status(self) -> str:
+        if isinstance(self.graph, MemoryGraph):
+            if self.graph_error:
+                return f"neo4j_unavailable: {self.graph_error}"
+            return "memory"
+        try:
+            self.graph._verify_connectivity()
+            return "ok"
+        except Exception as exc:
+            return f"unavailable: {exc}"
 
 
 app_state = AppState()

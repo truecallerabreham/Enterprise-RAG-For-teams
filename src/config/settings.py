@@ -17,6 +17,10 @@ class Settings(BaseModel):
     qdrant_collection: str = "code_chunks"
     vector_size: int = 1024
     graph_provider: str = "memory"
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = ""
+    neo4j_database: str = "neo4j"
     voyage_model: str = "voyage-code-3"
     llm_provider: str = "groq"
     llm_model: str = "llama-3.3-70b-versatile"
@@ -36,6 +40,10 @@ class Settings(BaseModel):
             "qdrant_collection": ("QDRANT_COLLECTION", "code_chunks"),
             "vector_size":    ("VECTOR_SIZE", "1024"),
             "graph_provider": ("GRAPH_PROVIDER", "memory"),
+            "neo4j_uri":      ("NEO4J_URI", "bolt://localhost:7687"),
+            "neo4j_user":     ("NEO4J_USERNAME", "neo4j"),
+            "neo4j_password": ("NEO4J_PASSWORD", ""),
+            "neo4j_database": ("NEO4J_DATABASE", "neo4j"),
             "voyage_model":   ("VOYAGE_MODEL", "voyage-code-3"),
             "llm_provider":   ("LLM_PROVIDER", "groq"),
             "llm_model":      ("LLM_MODEL", "llama-3.3-70b-versatile"),
