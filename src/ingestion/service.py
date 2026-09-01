@@ -20,8 +20,28 @@ from src.query.retrieval import sparse_terms
 from src.storage.memory import AppState
 
 
-IGNORED_DIRS = {".git", ".venv", "node_modules", "dist", "build", "__pycache__", ".pytest_cache", ".mypy_cache"}
+IGNORED_DIRS = {
+    ".git",
+    ".venv",
+    "node_modules",
+    "dist",
+    "build",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".agents",
+}
 SOURCE_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx", ".md", ".toml", ".yaml", ".yml", ".json"}
+
+# Localized documentation subdirectories (e.g. docs/<locale>/...). Kept short by design;
+# any unrecognized translation tree remains indexed.
+LOCALIZED_DOC_LOCALE_DIRS = {
+    "zh", "zh-cn", "zh-hans", "zh-hant", "zh-tw",
+    "ja", "ko",
+    "es", "fr", "de", "pt", "ru", "it", "tr", "uk", "pl",
+    "hi", "id", "fa", "ar", "vi", "ro", "nl", "cs", "hu", "fi", "sv",
+    "el", "he", "th", "bn", "ta", "te", "kn", "ml", "mr",
+}
 
 
 class IngestionService:
@@ -122,35 +142,36 @@ class IngestionService:
         new_candidates = []
         for path in source_files:
             for candidate in self.parser.parse_file(path, repo_path):
-                chunk_id = stable_chunk_id(repo.id, candidate.file_path, candidate.symbol_name, candidate.start_line)
+                normalized_path = candidate.file_path.replace("\\", "/")
+                chunk_id = stable_chunk_id(repo.id, normalized_path, candidate.symbol_name, candidate.start_line)
                 existing = self.state.chunks.get(chunk_id)
                 hash_value = candidate.ast_hash or candidate.content_hash
                 if existing and (existing.ast_hash or existing.content_hash) == hash_value:
                     parsed_chunks.append(existing)
                     continue
-                new_candidates.append((chunk_id, candidate))
+                new_candidates.append((chunk_id, candidate, normalized_path))
 
         batch_size = 90
         for i in range(0, len(new_candidates), batch_size):
             batch = new_candidates[i:i+batch_size]
             texts_to_embed = [
-                f"{c.file_path} {c.symbol_name or ''} {c.raw_text}"
-                for _, c in batch
+                f"{path} {c.symbol_name or ''} {c.raw_text}"
+                for _, c, path in batch
             ]
             embeddings = self.embedding.embed_documents(texts_to_embed)
-            
+
             new_chunks = []
             new_symbols = []
             new_edges = []
-            
-            for (chunk_id, candidate), emb in zip(batch, embeddings):
+
+            for (chunk_id, candidate, normalized_path), emb in zip(batch, embeddings):
                 chunk = CodeChunk(
                     id=chunk_id,
                     repo_id=repo.id,
                     repo_name=repo.name,
                     source_web_url=repo.source_web_url,
                     indexed_commit=repo.indexed_commit,
-                    file_path=candidate.file_path,
+                    file_path=normalized_path,
                     language=candidate.language,
                     symbol_name=candidate.symbol_name,
                     chunk_type=candidate.chunk_type,
@@ -162,7 +183,7 @@ class IngestionService:
                     summary=summarize_chunk(candidate.raw_text),
                     embedding=emb,
                     sparse_terms=sparse_terms(
-                        f"{candidate.file_path} {candidate.symbol_name or ''} {candidate.raw_text}"
+                        f"{normalized_path} {candidate.symbol_name or ''} {candidate.raw_text}"
                     ),
                 )
                 new_chunks.append(chunk)
@@ -199,7 +220,10 @@ class IngestionService:
     def _is_source_file(self, repo_path: Path, path: Path) -> bool:
         if not path.exists() or not path.is_file():
             return False
-        if any(part in IGNORED_DIRS for part in path.relative_to(repo_path).parts):
+        rel_parts = path.relative_to(repo_path).parts
+        if any(part in IGNORED_DIRS for part in rel_parts):
+            return False
+        if len(rel_parts) >= 2 and rel_parts[0] == "docs" and rel_parts[1] in LOCALIZED_DOC_LOCALE_DIRS:
             return False
         if path.suffix.lower() not in SOURCE_SUFFIXES:
             return False
@@ -214,7 +238,7 @@ class IngestionService:
         self.state.delete_chunks(self.state.chunk_ids_for_files(repo.id, changed_paths))
 
     def _prune_missing_files(self, repo: RepositoryRecord, repo_path: Path, source_files: list[Path]) -> None:
-        current_paths = {str(path.relative_to(repo_path)) for path in source_files}
+        current_paths = {str(path.relative_to(repo_path)).replace("\\", "/") for path in source_files}
         indexed_paths = {
             self.state.chunks[chunk_id].file_path
             for chunk_id in self.state.repo_chunks.get(repo.id, [])

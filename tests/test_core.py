@@ -300,6 +300,65 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Repository validation failed", response.json()["detail"])
 
+    def test_get_single_repository_returns_record(self) -> None:
+        client = TestClient(app)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            git_url = make_git_repo(Path(temp_dir))
+            repo_response = client.post(
+                "/repositories",
+                json={"name": "single-get", "git_url": git_url},
+            )
+        self.assertEqual(repo_response.status_code, 200)
+        repo_id = repo_response.json()["id"]
+
+        response = client.get(f"/repositories/{repo_id}")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["id"], repo_id)
+        self.assertEqual(body["name"], "single-get")
+        self.assertEqual(body["indexing_status"], "registered")
+
+    def test_get_unknown_repository_returns_404(self) -> None:
+        client = TestClient(app)
+        response = client.get("/repositories/does-not-exist")
+        self.assertEqual(response.status_code, 404)
+
+
+class IngestionPathTests(unittest.TestCase):
+    def test_ingestion_stored_file_path_uses_forward_slashes(self) -> None:
+        state = AppState(persist=False)
+        repo = state.add_repository(
+            RepositoryCreate(name="win-path", git_url="https://github.com/example/win-path.git")
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "src").mkdir()
+            (root / "src" / "app.py").write_text("def go():\n    return 1\n", encoding="utf-8")
+            chunks = IngestionService(state)._ingest_path(repo, root)
+        self.assertEqual(len(chunks), 1)
+        self.assertNotIn("\\", chunks[0].file_path)
+        self.assertEqual(chunks[0].file_path, "src/app.py")
+
+    def test_ingestion_excludes_dotfile_vendored_skills_and_localized_docs(self) -> None:
+        state = AppState(persist=False)
+        repo = state.add_repository(
+            RepositoryCreate(name="exclude-dirs", git_url="https://github.com/example/exclude-dirs.git")
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "app.py").write_text("def keeper():\n    return 1\n", encoding="utf-8")
+            (root / ".agents").mkdir()
+            (root / ".agents" / "notes.md").write_text("kept by mistake\n", encoding="utf-8")
+            (root / "docs").mkdir()
+            (root / "docs" / "hi").mkdir()
+            (root / "docs" / "hi" / "index.md").write_text("# HI\n", encoding="utf-8")
+            chunks = IngestionService(state)._ingest_path(repo, root)
+        paths = {chunk.file_path.replace("\\", "/") for chunk in chunks}
+        self.assertIn("app.py", paths)
+        self.assertNotIn(".agents/notes.md", paths)
+        self.assertNotIn("docs/hi/index.md", paths)
+
 
 if __name__ == "__main__":
     unittest.main()
