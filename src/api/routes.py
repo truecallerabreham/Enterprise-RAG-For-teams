@@ -55,6 +55,15 @@ def list_repositories() -> list[RepositoryRecord]:
     return list(app_state.repositories.values())
 
 
+@router.get("/repositories/{repo_id}", response_model=RepositoryRecord)
+def get_repository(repo_id: str) -> RepositoryRecord:
+    repo = app_state.repositories.get(repo_id)
+    if repo is None:
+        raise HTTPException(status_code=404, detail="Repository not found")
+    app_state.refresh_repository_counts(repo_id)
+    return repo
+
+
 @router.delete("/repositories/{repo_id}", response_model=dict)
 def delete_repository(repo_id: str) -> dict:
     deleted = app_state.delete_repository(repo_id)
