@@ -39,6 +39,8 @@ def health() -> HealthResponse:
 def register_repository(payload: RepositoryCreate) -> RepositoryRecord:
     valid, message = git_workspace.validate_remote(payload)
     if not valid:
+        valid, message, payload = git_workspace.validate_remote_with_default(payload)
+    if not valid:
         raise HTTPException(
             status_code=400,
             detail=(
