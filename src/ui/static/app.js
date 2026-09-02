@@ -139,10 +139,13 @@ document.getElementById('repoList').addEventListener('click', async e => {
 
 document.getElementById('repoForm').addEventListener('submit', async e => {
   e.preventDefault();
+  const form = e.currentTarget;
   const btn = document.getElementById('registerBtn');
+  const formError = document.getElementById('repoFormError');
+  if (formError) { formError.textContent = ''; formError.style.display = 'none'; }
   btn.disabled = true;
   btn.textContent = 'Registering…';
-  const fd = new FormData(e.currentTarget);
+  const fd = new FormData(form);
   const payload = {
     name: fd.get('name'),
     git_url: fd.get('git_url'),
@@ -152,15 +155,19 @@ document.getElementById('repoForm').addEventListener('submit', async e => {
   };
   try {
     const repo = await api('/repositories', { method: 'POST', body: payload });
-    addEvent('completed', `Registered "${repo.name}". Confirm ingestion to index it.`);
-    e.currentTarget.reset();
+    addEvent('completed', `Registered "${repo.name}" (branch=${repo.default_branch}). Confirm ingestion to index it.`);
+    form.reset();
     await loadRepositories();
-    // Auto-request permission
     const job = await api(`/repositories/${repo.id}/ingest`, { method: 'POST', body: { confirm: false } });
     renderEvents(job.assistant_events);
-  } catch {}
+  } catch (err) {
+    if (formError) {
+      formError.textContent = `Registration failed: ${err.message}`;
+      formError.style.display = 'block';
+    }
+  }
   btn.disabled = false;
-  btn.innerHTML = `<svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg> Register Repository`;
+  btn.innerHTML = `<svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" fill-rule="evenodd"/></svg> Register Repository`;
 });
 
 /* ── Ingestion ────────────────────────────────────────── */
